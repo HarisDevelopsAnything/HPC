@@ -22,24 +22,12 @@ void multiply_row(int row, int *A, int *B, int *C, int c1, int c2, double *times
     times[row] = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
-void mat_multiply(int *A, int *B, int *C, int r1, int c1, int c2) {
-    for (int i = 0; i < r1; i++) {
-        for (int j = 0; j < c2; j++) {
-            int sum = 0;
-            for (int k = 0; k < c1; k++) {
-                sum += A[i * c1 + k] * B[k * c2 + j];
-            }
-            C[i * c2 + j] = sum;
-        }
-    }
-}
-
 int main() {
     int shmid_A, shmid_B, shmid_C, shmid_times;
-    int *A, *B, *C;
-    double *times;
+    int *A, *B;
     int pid;
-    int r1,c1,r2,c2;
+    int r1, c1, r2, c2;
+    
     printf("No. of rows in A: ");
     scanf("%d", &r1);
     printf("No. of columns in A: ");
@@ -48,72 +36,57 @@ int main() {
     scanf("%d", &r2);
     printf("No. of columns in B: ");
     scanf("%d", &c2);
-    if(c1!=r2){
-        printf("Incompatible for multiplication!");
+    
+    if(c1 != r2) {
+        printf("Incompatible for multiplication!\n");
         exit(0);
     }
+    
     A = (int *)malloc(r1 * c1 * sizeof(int));
     B = (int *)malloc(r2 * c2 * sizeof(int));
-    C = (int *)malloc(r1 * c2 * sizeof(int));
+    
     for (int i = 0; i < r1; i++) {
         for (int j = 0; j < c1; j++) {
-            printf("A[%d][%d]: ", i,j);
-            scanf("%d", &A[i*c1+j]);
+            printf("A[%d][%d]: ", i, j);
+            scanf("%d", &A[i * c1 + j]);
         }
     }
-    for (int i = 0; i < r1; i++) {
+    
+    for (int i = 0; i < r2; i++) {
         for (int j = 0; j < c2; j++) {
-            C[i * c2 + j] = 0;
+            printf("B[%d][%d]: ", i, j);
+            scanf("%d", &B[i * c2 + j]);
         }
     }
-    for(int i=0;i<r2;i++){
-        for(int j=0;j<c2;j++){
-            printf("B[%d][%d]: ", i,j);
-            scanf("%d", &B[i*c2+j]);
-        }
-    }
-    printf("Matrix A:\n");
+    
+    printf("\nMatrix A:\n");
     for (int i = 0; i < r1; i++) {
-        for (int j = 0; j < c1; j++) printf("%d ", A[i * c1 + j]);
+        for (int j = 0; j < c1; j++) {
+            printf("%d ", A[i * c1 + j]);
+        }
         printf("\n");
     }
+    
     printf("Matrix B:\n");
     for (int i = 0; i < r2; i++) {
-        for (int j = 0; j < c2; j++) printf("%d ", B[i * c2 + j]);
-        printf("\n");
-    }
-    // Normal sequential multiplication
-    printf("\nSequential Multiplication\n");
-    struct timespec start_normal, end_normal;
-    clock_gettime(CLOCK_MONOTONIC, &start_normal);
-    mat_multiply(A, B, C, r1, c1, c2);
-    clock_gettime(CLOCK_MONOTONIC, &end_normal);
-    double time_normal = (end_normal.tv_sec - start_normal.tv_sec) + (end_normal.tv_nsec - start_normal.tv_nsec) / 1e9;
-    
-    printf("Result:\n");
-    for (int i = 0; i < r1; i++) {
         for (int j = 0; j < c2; j++) {
-            printf("%d ", C[i * c2 + j]);
+            printf("%d ", B[i * c2 + j]);
         }
         printf("\n");
     }
-    printf("Time taken: %f seconds\n", time_normal);
-    for (int i = 0; i < r1; i++) {
-        for (int j = 0; j < c2; j++) {
-            C[i * c2 + j] = 0;
-        }
-    }
     
-    shmid_A = shmget(1104, r1*c1*sizeof(int), IPC_CREAT | 0666);
-    shmid_B = shmget(1105, r2*c2*sizeof(int), IPC_CREAT | 0666);
-    shmid_C = shmget(1106, r1*c2*sizeof(int), IPC_CREAT | 0666);
-    shmid_times = shmget(1107, r1*sizeof(double), IPC_CREAT | 0666);
+    // Create shared memory segments
+    shmid_A = shmget(1104, r1 * c1 * sizeof(int), IPC_CREAT | 0666);
+    shmid_B = shmget(1105, r2 * c2 * sizeof(int), IPC_CREAT | 0666);
+    shmid_C = shmget(1106, r1 * c2 * sizeof(int), IPC_CREAT | 0666);
+    shmid_times = shmget(1107, r1 * sizeof(double), IPC_CREAT | 0666);
+    
     int* shared_A = (int *)shmat(shmid_A, NULL, 0);
     int* shared_B = (int *)shmat(shmid_B, NULL, 0);
     int* shared_C = (int *)shmat(shmid_C, NULL, 0);
     double* shared_times = (double *)shmat(shmid_times, NULL, 0);
-    int count = 0;
 
+    // Copy data to shared memory
     for (int i = 0; i < r1 * c1; i++) {
         shared_A[i] = A[i];
     }
@@ -126,14 +99,16 @@ int main() {
     
     printf("\nParallel Multiplication\n");
     printf("Multiplying matrices using child processes...\n");
-    struct timespec start_parallel, end_parallel;
-    clock_gettime(CLOCK_MONOTONIC, &start_parallel);
+
+    
+    // Fork child processes for each row
     for (int i = 0; i < r1; i++) {
         pid = fork();
         if (pid < 0) {
             perror("fork failed");
             exit(1);
         } else if (pid == 0) {
+            // Child process
             multiply_row(i, shared_A, shared_B, shared_C, c1, c2, shared_times);
             shmdt(shared_A);
             shmdt(shared_B);
@@ -143,14 +118,12 @@ int main() {
         }
     }
     
+    // Wait for all child processes to finish
     for (int i = 0; i < r1; i++) {
         wait(NULL);
     }
     
-    clock_gettime(CLOCK_MONOTONIC, &end_parallel);
-    double time_parallel = (end_parallel.tv_sec - start_parallel.tv_sec) + (end_parallel.tv_nsec - start_parallel.tv_nsec) / 1e9;
-    
-    // Also calculate max individual process time for comparison
+    // Calculate max individual process time
     double max_process_time = 0.0;
     for (int i = 0; i < r1; i++) {
         if (shared_times[i] > max_process_time) {
@@ -165,9 +138,9 @@ int main() {
         }
         printf("\n");
     }
-    printf("Time taken (total parallel): %f seconds\n", time_parallel);
     printf("Time taken (max single process): %f seconds\n", max_process_time);
 
+    // Cleanup shared memory
     shmdt(shared_A);
     shmdt(shared_B);
     shmdt(shared_C);
@@ -176,6 +149,9 @@ int main() {
     shmctl(shmid_B, IPC_RMID, NULL);
     shmctl(shmid_C, IPC_RMID, NULL);
     shmctl(shmid_times, IPC_RMID, NULL);
+    
+    free(A);
+    free(B);
 
     return 0;
 }
